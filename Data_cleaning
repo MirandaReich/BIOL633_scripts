@@ -1,0 +1,208 @@
+getwd() ## this will get us the working directory
+
+## creating a data frame, saving it, and ploting it against its squares
+x<-c(1:100)
+x
+y<-x^2
+plot(y~x)
+
+## creating a loop to get a list of elements from 2 to 101
+x.2<-vector()
+for(i in 1:length(x)){
+  x.2[i]<-x[i]+1
+}
+x.2
+
+## a function is useful for doing the same thing multiple times
+our_function<-function(our_argument){
+  x.3<-our_argument+2
+  return(x.3)
+}
+
+our_function(x)
+our_function(x.2)
+
+## clears global environment
+rm(list=ls())
+
+## downloading a package that interfaces with NCBI and loading it
+install.packages('rentrez')
+library(rentrez)
+help(package='rentrez')
+
+## finding the databases available in NCBI along with a summary and searchable terms for a database
+entrez_dbs()
+entrez_db_summary('nuccore')
+entrez_db_searchable('nuccore')
+
+## searching for general and specific terms in a database
+entrez_search(db='nuccore',term='mites')
+entrez_search(db='nuccore',term='trouessartia[ORGN]')
+entrez_search(db='nuccore',term='trouessartia[ORGN] AND coi[GENE]')
+
+## repeating a search and increasing the maximum number of entries
+entrez_search(db='nuccore',term='trouessartia[ORGN]')
+entrez_search(db='nuccore',term='trouessartia[ORGN]',retmax=40)
+
+## saving a search and calling the ids
+trou_search<-entrez_search(db='nuccore',term='trouessartia[ORGN]')
+trou_search$ids
+
+## seeing if any ids came from PubMed
+paper_link<-entrez_link(db='pubmed',id=trou_search$ids, dbfrom='nuccore')
+paper_link$links$nuccore_pubmed
+
+
+trou_summ<-entrez_summary(db='nuccore',id=trou_search$ids)
+trou_summ
+##extracting information
+trou_info<-extract_from_esummary(trou_summ,elements=c('organism','caption','gi'))
+trou_info
+t(trou_info)
+
+##querying information and using web histories
+entrez_search(db='nuccore',term='trouessartia[ORGN]')
+trou_web_search<-entrez_search(db='nuccore',term='trouessartia[ORGN]',use_history = TRUE)
+trou_web_pub<-entrez_link(db='pubmed',dbfrom='nuccore',cmd='neighbor_history',
+                          id=trou_search$ids)
+trou_web_summ<-entrez_summary(db='nuccore', web_history = trou_web_search$web_history)
+
+## pulling fasta files and writing fasta files to your computer
+trou_fasta<-entrez_fetch(db='nuccore',id=trou_search$ids,rettype='fasta')
+write(trou_fasta,file='trouessartia_sequences.fasta')
+
+##reading fasta files in R using the ape package
+install.packages('ape')
+library(ape)
+read.FASTA('trouessartia_sequences.fasta')
+
+## write somewhere else and read it back in
+temp<-tempfile()
+write(trou_fasta,temp)
+read.FASTA(temp)
+
+## clearing the global environment again; the first one is for saving only one element
+rm(list=ls()[!ls() %in% c('trou_search')])
+rm(list=ls())
+
+## search for Dabert and mites and scrapping for the necessary information
+dabert<-entrez_search(db='nuccore',term='Dabert AND mites',retmax=891,use_history = TRUE)
+search<-dabert$web_history
+
+## writing a function to look for accession numbers and loop through the sequences for flat files
+fetch.accession<-function(web_history,entries){
+  for( seq_start in seq(1,entries,50)){
+    recs <- entrez_fetch(db="nuccore", web_history=web_history,
+                         rettype="gb", retmax=50, retstart=seq_start)
+    cat(recs, file='flat_files.txt', append=TRUE)
+    cat(seq_start+49, "sequences downloaded\r")
+  }
+}
+
+fetch.accession(search,891)
+
+## reading in flat file in R
+install.packages('readr')
+library(readr)
+flat_files<-read_file('flat_files.txt')
+flat_files[[1]]
+
+##spiliting each of the flat files
+dabert_ft<-unlist(strsplit(flat_files,split='\n\n'))
+dabert_ft[1]
+
+## allows to you to use regular expressions in R
+install.packages('stringr')
+library(stringr)
+
+## finding the organism in the flat file and removing everything else
+organism_rough<-str_extract(dabert_ft,'ORGANISM\\s+(.+)\n')
+head(organism_rough)
+organism_clean<-str_replace(organism_rough,'ORGANISM\\s+(.+)\n', replacement='\\1')
+organism_clean
+
+## finding the vouchers and cleaning them up
+voucher_rough<-str_extract(dabert_ft,'voucher=\"(.*)\"')
+voucher_clean<-str_replace(voucher_rough,'voucher=\"(.*)\"',replacement='\\1')
+
+## finding the accessions and cleaning them up
+accession_rough<-str_extract(dabert_ft,'ACCESSION\\s+(.+)\n')
+accession_clean<-str_replace(accession_rough,'ACCESSION\\s+(.+)\n', replacement='\\1')
+
+## finding the products and cleaning them up
+product_rough<-str_extract(dabert_ft,'product=\"(.+)\"')
+product_clean<-str_replace(product_rough,'product=\"(.+)\"',replacement = '\\1')
+
+## finding the authors and cleaning them up
+authors_rough<-str_extract(dabert_ft,'AUTHORS\\s+(\\D+)TITLE')
+authors_clean<-str_replace(authors_rough,'AUTHORS\\s+(\\D+)TITLE',replacement='\\1')
+authors_clean<-str_replace_all(authors_clean,'\n\\W+',replacement = ' ')
+
+## finding the titles and cleaning them up
+title_rough<-str_extract(dabert_ft,'TITLE\\s+(\\D+)JOURNAL')
+title_clean<-str_replace(title_rough,'TITLE\\s+(\\D+)JOURNAL',replacement = '\\1')
+title_clean<-str_replace_all(title_clean,'\n\\W+',replacement=' ')
+
+## finding the journals and cleaning them up
+journal_rough<-str_extract(dabert_ft,'JOURNAL\\s+.+')
+journal_clean<-str_replace(journal_rough,'JOURNAL\\s+(.+)', replacement='\\1')
+
+## putting all of the clean versions in a data frame
+data<-data.frame(organism=organism_clean,voucher=voucher_clean,acc=accession_clean,
+                 product=product_clean,authors=authors_clean,title=title_clean,
+                 journal=journal_clean)
+
+## trimming the white spaces off
+data$product<-trimws(data$product)
+
+## merging by name
+data$Name<-data$product
+
+## data management package
+install.packages('dplyr')
+library(dplyr)
+
+## adds annotations
+install.packages('AnnotationBustR')
+library(AnnotationBustR)
+
+## AnnotationBustR list of most used terms for loci
+head(mtDNAterms)
+
+## merges data frames together by product
+data<-left_join(data,mtDNAterms,by=c('product'='Name'))
+data<-left_join(data,rDNAterms,by=c('product'='Name'))
+View(head(data))
+
+## paste the two columns together and remove them
+data$loci<-paste(data$Locus.x,data$Locus.y,sep=',')
+data$loci<-gsub(',NA|NA,','',data$loci)
+table(data$loci)
+table(data$product[data$loci=='NA'])
+
+## adding items to a list of terms and merging them together
+head(mtDNAterms)
+add.name<-data.frame("COI","CDS", "cytochrome oxidase subunit I", stringsAsFactors = FALSE)
+colnames(add.name)<-colnames(mtDNAterms)
+new.terms<-MergeSearchTerms(add.name, mtDNAterms, SortGenes=FALSE)
+
+## redoing evrything thing that was done previously
+data<-data.frame(organism=organism_clean,voucher=voucher_clean,acc=accession_clean,
+                 product=product_clean,authors=authors_clean,title=title_clean,
+                 journal=journal_clean)
+data$product<-trimws(data$product)
+data$Name<-data$product
+data<-left_join(data,new.terms,by=c('product'='Name'))
+data<-left_join(data,rDNAterms,by=c('product'='Name'))
+data$loci<-paste(data$Locus.x,data$Locus.y,sep=',')
+data$loci<-gsub(',NA|NA,','',data$loci)
+table(data$loci)
+table(data$product[data$loci=='NA'])
+
+## looking at the data
+names(data)
+data<-data[c(1:7,13)]
+View(data)
+
+## writing the data frame to a csv file
+write.csv(data,file='debert_mites.csv')
